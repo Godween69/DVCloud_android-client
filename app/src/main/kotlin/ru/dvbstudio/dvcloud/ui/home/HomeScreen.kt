@@ -6,12 +6,17 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -29,67 +34,131 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
 import ru.dvbstudio.dvcloud.data.repository.AuthRepository
+import ru.dvbstudio.dvcloud.domain.model.AuthState
 
 /**
  * Главный экран после успешного входа.
  *
- * MVP: показывает имя пользователя и кнопки выхода/сброса.
- * В следующих шагах: лента, автовыгрузка, настройки.
+ * Показывает:
+ * - Карточку с приветствием и статусом авторизации
+ * - Информацию об устройстве и сервере
+ * - Кнопки выхода и сброса
  */
 @Composable
 fun HomeScreen(
     onLogout: () -> Unit,
+    authState: AuthState,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val repository = remember { AuthRepository(context) }
-    val authState by repository.authStateFlow().collectAsState(initial = null)
     var showWipeDialog by remember { mutableStateOf(false) }
 
-    val displayName = (authState as? ru.dvbstudio.dvcloud.domain.model.AuthState.Authenticated)
+    val displayName = (authState as? AuthState.Authenticated)
         ?.deviceToken?.deviceName
         ?: "Пользователь"
+    val serverUrl = (authState as? AuthState.Authenticated)
+        ?.deviceToken?.serverUrl
+        ?: "неизвестен"
 
-    Scaffold { innerPadding ->
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(innerPadding)
-                .padding(24.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp),
-            horizontalAlignment = Alignment.Start,
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .imePadding()
+            .navigationBarsPadding()
+            .verticalScroll(rememberScrollState())
+            .padding(24.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp),
+    ) {
+        Text(
+            text = stringResource(id = ru.dvbstudio.dvcloud.R.string.home_title),
+            style = MaterialTheme.typography.headlineLarge,
+            fontWeight = FontWeight.Bold,
+            color = MaterialTheme.colorScheme.onBackground,
+        )
+
+        // Карточка приветствия
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.primaryContainer,
+            ),
         ) {
-            Text(
-                text = stringResource(id = ru.dvbstudio.dvcloud.R.string.home_title),
-                style = MaterialTheme.typography.headlineLarge,
-                fontWeight = FontWeight.Bold,
-            )
-            Text(
-                text = stringResource(id = ru.dvbstudio.dvcloud.R.string.home_welcome, displayName),
-                style = MaterialTheme.typography.bodyLarge,
-            )
-
-            Spacer(modifier = Modifier.height(24.dp))
-
-            Button(
-                onClick = {
-                    scope.launch {
-                        repository.initApiClient()
-                        repository.logout()
-                        onLogout()
-                    }
-                },
-                modifier = Modifier.fillMaxWidth(),
+            Column(
+                modifier = Modifier.padding(20.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                Text(stringResource(id = ru.dvbstudio.dvcloud.R.string.home_logout))
+                Text(
+                    text = stringResource(
+                        id = ru.dvbstudio.dvcloud.R.string.home_welcome,
+                        displayName,
+                    ),
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                )
+                Text(
+                    text = stringResource(id = ru.dvbstudio.dvcloud.R.string.home_status_authenticated),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                )
             }
+        }
 
-            OutlinedButton(
-                onClick = { showWipeDialog = true },
-                modifier = Modifier.fillMaxWidth(),
+        // Информация о статусе
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.surfaceVariant,
+            ),
+        ) {
+            Column(
+                modifier = Modifier.padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
             ) {
-                Text(stringResource(id = ru.dvbstudio.dvcloud.R.string.home_wipe))
+                Text(
+                    text = stringResource(
+                        id = ru.dvbstudio.dvcloud.R.string.home_status_device,
+                        displayName,
+                    ),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Text(
+                    text = stringResource(
+                        id = ru.dvbstudio.dvcloud.R.string.home_status_server,
+                        serverUrl,
+                    ),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
+        }
+
+        Spacer(modifier = Modifier.height(8.dp))
+
+        Button(
+            onClick = {
+                scope.launch {
+                    repository.initApiClient()
+                    repository.logout()
+                    onLogout()
+                }
+            },
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(52.dp),
+        ) {
+            Text(stringResource(id = ru.dvbstudio.dvcloud.R.string.home_logout))
+        }
+
+        OutlinedButton(
+            onClick = { showWipeDialog = true },
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(52.dp),
+        ) {
+            Text(stringResource(id = ru.dvbstudio.dvcloud.R.string.home_wipe))
         }
     }
 

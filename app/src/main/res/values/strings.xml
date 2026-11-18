@@ -1,11 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- Общие -->
     <string name="app_name">DV Cloud</string>
     <string name="ok">OK</string>
     <string name="cancel">Отмена</string>
+    <string name="close">Закрыть</string>
 
-    <!-- Экран входа -->
+    <!-- Вход -->
     <string name="login_title">Вход в DV Cloud</string>
     <string name="login_subtitle">Введите учётные данные</string>
     <string name="login_username">Логин</string>
@@ -15,9 +15,11 @@
     <string name="login_error_invalid">Неверный логин или пароль</string>
     <string name="login_error_network">Нет соединения с сервером</string>
     <string name="login_error_unknown">Ошибка входа</string>
+    <string name="login_error_server">Сервер вернул неожиданную ошибку</string>
+    <string name="login_error_server_outdated">Сервер устарел: не поддерживаются токены устройств. Обратитесь к администратору.</string>
     <string name="login_loading">Проверка…</string>
 
-    <!-- Экран 2FA -->
+    <!-- 2FA -->
     <string name="twofactor_title">Двухфакторная аутентификация</string>
     <string name="twofactor_subtitle">Введите код из приложения-аутентификатора</string>
     <string name="twofactor_code">Код</string>
@@ -26,9 +28,17 @@
     <string name="twofactor_error_expired">Код истёк, начните вход заново</string>
     <string name="twofactor_error_empty">Введите код</string>
 
+    <!-- Успех -->
+    <string name="auth_success_title">Вход выполнен</string>
+    <string name="auth_success_subtitle">Добро пожаловать, %1$s!</string>
+    <string name="auth_success_button">Продолжить</string>
+
     <!-- Главный экран -->
     <string name="home_title">Главная</string>
     <string name="home_welcome">Добро пожаловать, %1$s!</string>
+    <string name="home_status_authenticated">Авторизован</string>
+    <string name="home_status_device">Устройство: %1$s</string>
+    <string name="home_status_server">Сервер: %1$s</string>
     <string name="home_logout">Выйти</string>
     <string name="home_wipe">Сбросить устройство (при утере)</string>
 </resources>

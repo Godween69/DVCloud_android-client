@@ -28,6 +28,14 @@ class LoginViewModel(application: Application) : AndroidViewModel(application) {
     var twoFactorCode by mutableStateOf("")
         private set
 
+    // Ошибки полей для отображения под полями ввода
+    var usernameError by mutableStateOf<String?>(null)
+        private set
+    var passwordError by mutableStateOf<String?>(null)
+        private set
+    var codeError by mutableStateOf<String?>(null)
+        private set
+
     private var currentTicket: String? = null
     private var currentMethods: List<String> = emptyList()
 
@@ -35,24 +43,46 @@ class LoginViewModel(application: Application) : AndroidViewModel(application) {
         repository.initApiClient()
     }
 
-    fun updateUsername(value: String) { username = value }
-    fun updatePassword(value: String) { password = value }
-    fun updateTwoFactorCode(value: String) { twoFactorCode = value }
+    fun updateUsername(value: String) {
+        username = value
+        if (value.isNotBlank()) usernameError = null
+    }
+
+    fun updatePassword(value: String) {
+        password = value
+        if (value.isNotBlank()) passwordError = null
+    }
+
+    fun updateTwoFactorCode(value: String) {
+        twoFactorCode = value
+        if (value.isNotBlank()) codeError = null
+    }
 
     fun login() {
-        if (username.isBlank() || password.isBlank()) {
-            _state.value = LoginUiState.Error(messageId = ru.dvbstudio.dvcloud.R.string.login_error_empty)
-            return
+        // Валидация полей: ошибки показываем под каждым полем
+        var hasError = false
+        if (username.isBlank()) {
+            usernameError = "Заполните логин"
+            hasError = true
         }
+        if (password.isBlank()) {
+            passwordError = "Заполните пароль"
+            hasError = true
+        }
+        if (hasError) return
+
         _state.value = LoginUiState.Loading
         viewModelScope.launch {
             when (val result = repository.login(username, password)) {
                 is ApiResult.Success -> handleLoginStep(result.data)
                 is ApiResult.Error -> handleError(result.code, result.message)
-                is ApiResult.Network -> handleNetworkError(result.exception)
-                is ApiResult.Unauthorized -> _state.value = LoginUiState.Error(
-                    messageId = ru.dvbstudio.dvcloud.R.string.login_error_invalid,
+                is ApiResult.Network -> _state.value = LoginUiState.Error(
+                    details = "NetworkError: ${result.exception::class.java.simpleName}\n${result.exception.message}",
                 )
+                is ApiResult.Unauthorized -> {
+                    passwordError = "Неверный логин или пароль"
+                    _state.value = LoginUiState.Idle
+                }
             }
         }
     }
@@ -60,30 +90,46 @@ class LoginViewModel(application: Application) : AndroidViewModel(application) {
     fun completeTwoFactor() {
         val ticket = currentTicket
         if (ticket == null) {
-            _state.value = LoginUiState.Error(messageId = ru.dvbstudio.dvcloud.R.string.twofactor_error_expired)
+            codeError = "Сессия истекла, начните вход заново"
+            _state.value = LoginUiState.Idle
             return
         }
         if (twoFactorCode.isBlank()) {
-            _state.value = LoginUiState.Error(messageId = ru.dvbstudio.dvcloud.R.string.twofactor_error_empty)
+            codeError = "Введите код"
             return
         }
         _state.value = LoginUiState.Loading
         viewModelScope.launch {
             when (val result = repository.completeTwoFactor(ticket, twoFactorCode)) {
                 is ApiResult.Success -> {
-                    repository.saveRegistration(result.data, ru.dvbstudio.dvcloud.BuildConfig.API_BASE_URL)
-                    _state.value = LoginUiState.Success
+                    repository.saveRegistration(
+                        result.data,
+                        ru.dvbstudio.dvcloud.BuildConfig.API_BASE_URL,
+                    )
+                    _state.value = LoginUiState.Success(result.data.displayName)
                 }
-                is ApiResult.Error -> _state.value = LoginUiState.Error(
-                    messageId = if (result.code == 401) ru.dvbstudio.dvcloud.R.string.twofactor_error_invalid
-                    else ru.dvbstudio.dvcloud.R.string.login_error_unknown,
+                is ApiResult.Error -> {
+                    codeError = when (result.code) {
+                        401 -> "Неверный код"
+                        429 -> "Слишком много попыток"
+                        else -> "Ошибка: ${result.message}"
+                    }
+                    _state.value = LoginUiState.Idle
+                }
+                is ApiResult.Network -> _state.value = LoginUiState.Error(
+                    details = "NetworkError: ${result.exception::class.java.simpleName}\n${result.exception.message}",
                 )
-                is ApiResult.Network -> handleNetworkError(result.exception)
-                is ApiResult.Unauthorized -> _state.value = LoginUiState.Error(
-                    messageId = ru.dvbstudio.dvcloud.R.string.twofactor_error_invalid,
-                )
+                is ApiResult.Unauthorized -> {
+                    codeError = "Неверный код"
+                    _state.value = LoginUiState.Idle
+                }
             }
         }
+    }
+
+    // Сброс сообщения об успехе (после нажатия "Продолжить")
+    fun dismissSuccess() {
+        _state.value = LoginUiState.Authenticated
     }
 
     fun clearError() {
@@ -95,14 +141,20 @@ class LoginViewModel(application: Application) : AndroidViewModel(application) {
         currentTicket = null
         currentMethods = emptyList()
         twoFactorCode = ""
+        codeError = null
         _state.value = LoginUiState.Idle
     }
 
     private fun handleLoginStep(step: LoginStep) {
         when (step) {
-            is LoginStep.Completed -> viewModelScope.launch {
-                repository.saveRegistration(step.registration, ru.dvbstudio.dvcloud.BuildConfig.API_BASE_URL)
-                _state.value = LoginUiState.Success
+            is LoginStep.Completed -> {
+                viewModelScope.launch {
+                    repository.saveRegistration(
+                        step.registration,
+                        ru.dvbstudio.dvcloud.BuildConfig.API_BASE_URL,
+                    )
+                    _state.value = LoginUiState.Success(step.registration.displayName)
+                }
             }
             is LoginStep.RequiresTwoFactor -> {
                 currentTicket = step.ticket
@@ -113,31 +165,36 @@ class LoginViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun handleError(code: Int, message: String) {
-        val messageId = when (code) {
-            401, 429 -> ru.dvbstudio.dvcloud.R.string.login_error_invalid
-            in 500..599 -> ru.dvbstudio.dvcloud.R.string.login_error_unknown
-            else -> ru.dvbstudio.dvcloud.R.string.login_error_unknown
+        when (code) {
+            401 -> passwordError = "Неверный логин или пароль"
+            429 -> passwordError = "Слишком много попыток. Подождите."
+            500 -> {
+                // Специальный случай: сервер 0.17.0 вернул user без deviceToken
+                if (message.contains("Неожиданный ответ")) {
+                    _state.value = LoginUiState.Error(
+                        details = "Сервер устарел: не поддерживаются токены устройств. Обратитесь к администратору.",
+                    )
+                } else {
+                    _state.value = LoginUiState.Error(details = "Ошибка $code: $message")
+                }
+            }
+            in 500..599 -> _state.value = LoginUiState.Error(
+                details = "Ошибка сервера ($code): $message",
+            )
+            else -> _state.value = LoginUiState.Error(details = "Ошибка $code: $message")
         }
-        _state.value = LoginUiState.Error(messageId = messageId, details = message)
-    }
-
-    /**
-     * Показываем точный тип исключения в деталях — это ключ к диагностике.
-     * Формат: "КлассИсключения: сообщение"
-     */
-    private fun handleNetworkError(e: Throwable) {
-        val details = "${e::class.java.simpleName}: ${e.message ?: "без сообщения"}"
-        _state.value = LoginUiState.Error(
-            messageId = ru.dvbstudio.dvcloud.R.string.login_error_network,
-            details = details,
-        )
+        if (code == 401 || code == 429) _state.value = LoginUiState.Idle
     }
 }
 
 sealed class LoginUiState {
     data object Idle : LoginUiState()
     data object Loading : LoginUiState()
-    data class Error(val messageId: Int, val details: String? = null) : LoginUiState()
+    // Ошибка общего характера (не относящаяся к конкретному полю)
+    data class Error(val details: String) : LoginUiState()
     data class RequiresTwoFactor(val methods: List<String>) : LoginUiState()
-    data object Success : LoginUiState()
+    // Успех — показать диалог приветствия
+    data class Success(val displayName: String) : LoginUiState()
+    // Пользователь уже аутентифицирован (после dismissSuccess)
+    data object Authenticated : LoginUiState()
 }
