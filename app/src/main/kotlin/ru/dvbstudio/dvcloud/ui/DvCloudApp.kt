@@ -1,6 +1,7 @@
 package ru.dvbstudio.dvcloud.ui
 
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -18,21 +19,24 @@ fun DvCloudApp(
     initialAuthState: AuthState,
     loginViewModel: LoginViewModel = viewModel(),
 ) {
-    var screen by remember {
-        mutableStateOf<Screen>(
-            when (initialAuthState) {
-                is AuthState.Authenticated -> Screen.Home(initialAuthState)
-                is AuthState.NotAuthenticated -> Screen.Login
-            },
-        )
+    // Реактивно наблюдаем за состоянием аутентификации
+    val authState by loginViewModel.repository.authStateFlow().collectAsState(initial = initialAuthState)
+
+    // Локальное состояние экрана (Login / TwoFactor / Home)
+    var screen by remember { mutableStateOf<Screen>(Screen.Login) }
+
+    // При изменении authState обновляем экран
+    LaunchedEffect(authState) {
+        screen = when (authState) {
+            is AuthState.Authenticated -> Screen.Home(authState)
+            is AuthState.NotAuthenticated -> Screen.Login
+        }
     }
 
     when (val current = screen) {
         is Screen.Login -> LoginScreen(
             onSuccess = {
-                // Получаем актуальное состояние из TokenVault
-                // (после dismissSuccess в ViewModel)
-                screen = Screen.Home(AuthState.NotAuthenticated)
+                // authState изменится автоматически через Flow
             },
             onRequiresTwoFactor = {
                 screen = Screen.TwoFactor
@@ -42,13 +46,15 @@ fun DvCloudApp(
         is Screen.TwoFactor -> TwoFactorScreen(
             onBack = { screen = Screen.Login },
             onSuccess = {
-                screen = Screen.Home(AuthState.NotAuthenticated)
+                // authState изменится автоматически через Flow
             },
             viewModel = loginViewModel,
         )
         is Screen.Home -> HomeScreen(
-            onLogout = { screen = Screen.Login },
-            authState = initialAuthState,
+            onLogout = {
+                // authState изменится автоматически через Flow
+            },
+            authState = authState,
         )
     }
 }

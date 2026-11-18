@@ -21,6 +21,7 @@ import java.security.KeyPairGenerator
 import java.security.KeyStore
 import java.security.Signature
 import java.security.spec.ECGenParameterSpec
+import android.util.Log
 import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
@@ -154,10 +155,17 @@ class TokenVault(private val context: Context) {
     fun sign(message: ByteArray): ByteArray {
         ensureKeys()
         val keyPair = getSigningKeyPair()
-        val signature = Signature.getInstance("SHA256withECDSA", "AndroidKeyStore")
-        signature.initSign(keyPair.private)
-        signature.update(message)
-        return signature.sign()
+        return try {
+            val signature = Signature.getInstance("SHA256withECDSA", "AndroidKeyStore")
+            signature.initSign(keyPair.private)
+            signature.update(message)
+            signature.sign()
+        } catch (e: Exception) {
+            Log.e("TokenVault", "Ошибка подписи: ${e.message}", e)
+            Log.e("TokenVault", "Алгоритм: SHA256withECDSA, провайдер: AndroidKeyStore")
+            Log.e("TokenVault", "Ключ существует: ${keystore().containsAlias(ALIAS_SIGNING)}")
+            throw e
+        }
     }
 
     // ===== Шифрование/дешифрование токена =====
