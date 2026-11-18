@@ -19,13 +19,14 @@ import java.util.concurrent.TimeUnit
 import javax.net.ssl.SSLException
 
 /**
- * DNS-резолвер: принудительно использует IPv4 (на случай если телефон пытается IPv6).
+ * DNS-резолвер: принудительно использует IPv4.
+ * Причина: сервер cloud.dvbstudio.ru отвечает только на IPv4 (155.212.161.161),
+ * телефон может пытаться использовать IPv6 и получать отказ.
  */
 class IPv4Dns : Dns {
     override fun lookup(hostname: String): List<InetAddress> {
         return try {
             val addresses = Dns.SYSTEM.lookup(hostname)
-            // Фильтруем только IPv4 адреса
             val ipv4 = addresses.filter { it is Inet4Address }
             if (ipv4.isEmpty()) {
                 Log.w("ApiClient", "Нет IPv4 адресов для $hostname, используем все")
@@ -42,7 +43,12 @@ class IPv4Dns : Dns {
 }
 
 /**
- * HTTP-клиент для DV Cloud API с принудительным IPv4.
+ * HTTP-клиент для DV Cloud API.
+ *
+ * Особенности:
+ * - IPv4Dns: принудительный IPv4 (решает проблему недоступности по IPv6)
+ * - AuthInterceptor: автоматическая подпись запросов токеном устройства
+ * - HttpLoggingInterceptor: логи запросов/ответов в Logcat (тег OkHttp)
  */
 class ApiClient(context: Context, baseUrl: String) {
 
@@ -55,18 +61,21 @@ class ApiClient(context: Context, baseUrl: String) {
             encodeDefaults = true
             isLenient = true
         }
+
+        // Логгер OkHttp: пишет в Logcat с тегом OkHttp
+        private val okHttpLogger = object : HttpLoggingInterceptor.Logger {
+            override fun log(message: String) {
+                Log.d("OkHttp", message)
+            }
+        }
     }
 
     private val client: OkHttpClient = OkHttpClient.Builder()
-        .dns(IPv4Dns())  // Принудительно IPv4
+        .dns(IPv4Dns())
         .addInterceptor(AuthInterceptor(context))
-        .addInterceptor(HttpLoggingInterceptor().apply {
+        // Logger передаётся в конструктор, а не через свойство
+        .addInterceptor(HttpLoggingInterceptor(okHttpLogger).apply {
             level = HttpLoggingInterceptor.Level.BASIC
-            logger = object : HttpLoggingInterceptor.Logger {
-                override fun log(message: String) {
-                    Log.d("OkHttp", message)
-                }
-            }
         })
         .connectTimeout(30, TimeUnit.SECONDS)
         .readTimeout(30, TimeUnit.SECONDS)
@@ -141,7 +150,6 @@ class ApiClient(context: Context, baseUrl: String) {
     ): ApiResult<T> {
         return try {
             Log.d(TAG, "Запрос: ${request.method} ${request.url}")
-            Log.d(TAG, "Полный URL: ${request.url}")
             val response = client.newCall(request).execute()
             val responseBody = response.body?.string() ?: ""
             Log.d(TAG, "Ответ: ${response.code}, длина: ${responseBody.length}")
