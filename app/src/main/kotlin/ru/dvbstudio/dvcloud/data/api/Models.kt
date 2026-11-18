@@ -4,13 +4,15 @@ import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
 // ===== Публичная модель пользователя (что отдаёт сервер) =====
+// Все поля optional с дефолтными значениями — сервер может не возвращать часть полей
 @Serializable
 data class PublicUser(
-    val id: String,
-    val login: String,
-    @SerialName("display_name") val displayName: String,
-    @SerialName("is_admin") val isAdmin: Boolean,
-    @SerialName("is_child") val isChild: Boolean,
+    val id: String = "",
+    val login: String = "",
+    @SerialName("display_name") val displayName: String = "",
+    @SerialName("is_admin") val isAdmin: Boolean = false,
+    @SerialName("is_child") val isChild: Boolean = false,
+    @SerialName("quota_bytes") val quotaBytes: Long = 0L,
 )
 
 // ===== Запросы входа =====
@@ -28,26 +30,24 @@ data class DeviceRequest(
 )
 
 // ===== Ответы входа =====
-// Сервер возвращает либо {user} (успех), либо {twoFactor} (нужен 2FA).
-// kotlinx-serialization не поддерживает union types напрямую, поэтому используем nullable поля.
 @Serializable
 data class LoginResponse(
     val user: PublicUser? = null,
     val twoFactor: TwoFactorChallenge? = null,
-    val deviceToken: String? = null,   // если передан device, сервер вернёт токен
+    val deviceToken: String? = null,
 )
 
 @Serializable
 data class TwoFactorChallenge(
-    val ticket: String,        // одноразовый талон на 5 минут
-    val methods: List<String>, // доступные методы: ["chat", "totp", "recovery"]
+    val ticket: String,
+    val methods: List<String>,
 )
 
 // ===== Запросы 2FA =====
 @Serializable
 data class TwoFactorCodeRequest(
     val ticket: String,
-    val code: String,          // TOTP или запасной код
+    val code: String,
     val device: DeviceRequest? = null,
 )
 
@@ -68,8 +68,8 @@ data class MeResponse(
 data class DeviceInfo(
     val id: String,
     @SerialName("device_name") val deviceName: String,
-    @SerialName("created_at") val createdAt: String,    // ISO 8601
-    @SerialName("last_seen_at") val lastSeenAt: String, // ISO 8601
+    @SerialName("created_at") val createdAt: String,
+    @SerialName("last_seen_at") val lastSeenAt: String,
     @SerialName("last_ip") val lastIp: String? = null,
     @SerialName("revoked_at") val revokedAt: String? = null,
 )
@@ -87,5 +87,5 @@ sealed class ApiResult<out T> {
     data class Success<T>(val data: T) : ApiResult<T>()
     data class Error(val code: Int, val message: String) : ApiResult<Nothing>()
     data class Network(val exception: Throwable) : ApiResult<Nothing>()
-    data object Unauthorized : ApiResult<Nothing>()  // 401 — токен отозван
+    data object Unauthorized : ApiResult<Nothing>()
 }
