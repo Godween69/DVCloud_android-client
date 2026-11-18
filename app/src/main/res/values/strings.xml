@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Общие -->
+    <string name="app_name">DV Cloud</string>
+    <string name="ok">OK</string>
+    <string name="cancel">Отмена</string>
+
+    <!-- Экран входа -->
+    <string name="login_title">Вход в DV Cloud</string>
+    <string name="login_subtitle">Введите учётные данные</string>
+    <string name="login_username">Логин</string>
+    <string name="login_password">Пароль</string>
+    <string name="login_button">Войти</string>
+    <string name="login_error_empty">Заполните все поля</string>
+    <string name="login_error_invalid">Неверный логин или пароль</string>
+    <string name="login_error_network">Нет соединения с сервером</string>
+    <string name="login_error_unknown">Ошибка входа</string>
+    <string name="login_loading">Проверка…</string>
+
+    <!-- Экран 2FA -->
+    <string name="twofactor_title">Двухфакторная аутентификация</string>
+    <string name="twofactor_subtitle">Введите код из приложения-аутентификатора</string>
+    <string name="twofactor_code">Код</string>
+    <string name="twofactor_button">Подтвердить</string>
+    <string name="twofactor_error_invalid">Неверный код</string>
+    <string name="twofactor_error_expired">Код истёк, начните вход заново</string>
+    <string name="twofactor_error_empty">Введите код</string>
+
+    <!-- Главный экран -->
+    <string name="home_title">Главная</string>
+    <string name="home_welcome">Добро пожаловать, %1$s!</string>
+    <string name="home_logout">Выйти</string>
+    <string name="home_wipe">Сбросить устройство (при утере)</string>
+</resources>
