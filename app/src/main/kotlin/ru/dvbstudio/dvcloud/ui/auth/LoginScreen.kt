@@ -11,10 +11,13 @@ import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
@@ -22,9 +25,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -44,14 +44,17 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 
 /**
- * Экран ввода логина и пароля.
+ * Экран входа.
  *
- * Ключевые UX-решения:
- * - imePadding() — клавиатура сдвигает контент вверх, кнопка "Войти" не прячется
- * - verticalScroll — можно скроллить, если экран всё-таки не помещается
- * - Ошибки показываются под каждым полем красным текстом (не Snackbar)
- * - Успех — диалог с галочкой и кнопкой "Продолжить"
- * - Общая ошибка (сеть, сервер) — в красной карточке над кнопкой
+ * Ключ к работе с клавиатурой:
+ * - Манифест: windowSoftInputMode="adjustResize" — Android уменьшает размер окна
+ *   при появлении клавиатуры, а не сдвигает весь экран целиком.
+ * - Compose: imePadding() на корневом Box добавляет отступ снизу под клавиатуру.
+ * - contentAlignment = Alignment.TopCenter — контент прижимается к верху,
+ *   а не центрируется в растянутой области (иначе кнопка «Войти» могла бы
+ *   уйти за нижнюю границу доступной области).
+ * - verticalScroll — страховка: если экран всё-таки не помещается, можно прокрутить.
+ * - statusBarsPadding — отступ от статус-бара сверху.
  */
 @Composable
 fun LoginScreen(
@@ -63,7 +66,6 @@ fun LoginScreen(
     val focusManager = LocalFocusManager.current
     val keyboardController = LocalSoftwareKeyboardController.current
 
-    // Реакция на смену состояния
     LaunchedEffect(state) {
         when (state) {
             is LoginUiState.RequiresTwoFactor -> onRequiresTwoFactor()
@@ -72,7 +74,6 @@ fun LoginScreen(
         }
     }
 
-    // Скрываем клавиатуру при переходе в Loading
     LaunchedEffect(state) {
         if (state is LoginUiState.Loading) keyboardController?.hide()
     }
@@ -80,24 +81,36 @@ fun LoginScreen(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .imePadding()                    // отступ под клавиатуру
-            .navigationBarsPadding()         // отступ под системную панель
+            // Отступы системных зон: статус-бар сверху, клавиатура снизу, навигация снизу
+            .statusBarsPadding()
+            .imePadding()
+            .navigationBarsPadding()
             .verticalScroll(rememberScrollState())
-            .padding(24.dp),
-        contentAlignment = Alignment.Center,
+            .padding(horizontal = 24.dp, vertical = 16.dp),
+        // Контент прижат к верху — при появлении клавиатуры всё сдвигается вверх
+        contentAlignment = Alignment.TopCenter,
     ) {
         if (state is LoginUiState.Loading) {
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                CircularProgressIndicator(
-                    color = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.size(56.dp),
-                )
-                Spacer(modifier = Modifier.height(16.dp))
-                Text(
-                    text = stringResource(id = ru.dvbstudio.dvcloud.R.string.login_loading),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+            // Спиннер в центре видимой области (после сдвига)
+            Box(
+                modifier = Modifier.fillMaxWidth(),
+                contentAlignment = Alignment.Center,
+            ) {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    modifier = Modifier.padding(top = 80.dp),
+                ) {
+                    CircularProgressIndicator(
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(56.dp),
+                    )
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Text(
+                        text = stringResource(id = ru.dvbstudio.dvcloud.R.string.login_loading),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
             }
         } else {
             Column(
@@ -117,7 +130,6 @@ fun LoginScreen(
                 )
                 Spacer(modifier = Modifier.height(8.dp))
 
-                // Поле логина + ошибка под ним
                 OutlinedTextField(
                     value = viewModel.username,
                     onValueChange = viewModel::updateUsername,
@@ -142,7 +154,6 @@ fun LoginScreen(
                     )
                 }
 
-                // Поле пароля + ошибка под ним
                 OutlinedTextField(
                     value = viewModel.password,
                     onValueChange = viewModel::updatePassword,
@@ -171,7 +182,6 @@ fun LoginScreen(
                     )
                 }
 
-                // Общая ошибка (сеть, сервер) — красная карточка
                 if (state is LoginUiState.Error) {
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(
@@ -204,7 +214,6 @@ fun LoginScreen(
         }
     }
 
-    // Диалог успеха
     if (state is LoginUiState.Success) {
         val name = (state as LoginUiState.Success).displayName
         AlertDialog(
