@@ -14,17 +14,8 @@ import java.util.concurrent.TimeUnit
 /**
  * HTTP-клиент для DV Cloud API.
  *
- * Настройка:
- * - Base URL из BuildConfig (можно переопределить для теста)
- * - AuthInterceptor подписывает каждый запрос
- * - HttpLoggingInterceptor логирует запросы/ответы (только в debug)
- * - Таймауты: 30s (для больших файлов)
- *
- * Методы:
- * - login() — шаг 1 входа (пароль)
- * - twoFactorCode() — шаг 2а (TOTP/запасной код)
- * - me() — проверка валидности токена
- * - logout() — выход
+ * Каждый метод (login, twoFactorCode, me, logout) имеет свой тип запроса и ответа.
+ * Это проще и безопаснее, чем generic-рефлексия.
  */
 class ApiClient(context: Context, baseUrl: String) {
 
@@ -32,7 +23,7 @@ class ApiClient(context: Context, baseUrl: String) {
         private const val TAG = "ApiClient"
         private val JSON = "application/json".toMediaType()
 
-        // JSON-конфигурация: игнорируем неизвестные поля, не сериализуем null
+        // JSON-конфигурация: игнорируем неизвестные поля
         private val json = Json {
             ignoreUnknownKeys = true
             encodeDefaults = true
@@ -43,11 +34,7 @@ class ApiClient(context: Context, baseUrl: String) {
     private val client: OkHttpClient = OkHttpClient.Builder()
         .addInterceptor(AuthInterceptor(context))
         .addInterceptor(HttpLoggingInterceptor().apply {
-            level = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
-                HttpLoggingInterceptor.Level.BODY
-            } else {
-                HttpLoggingInterceptor.Level.BASIC
-            }
+            level = HttpLoggingInterceptor.Level.BODY
         })
         .connectTimeout(30, TimeUnit.SECONDS)
         .readTimeout(30, TimeUnit.SECONDS)
@@ -56,58 +43,80 @@ class ApiClient(context: Context, baseUrl: String) {
 
     private val apiUrl = baseUrl.trimEnd('/')
 
-    // ===== Вход =====
-
-    // Шаг 1: пароль. Если включён 2FA, возвращает ticket для шага 2.
-    suspend fun login(login: String, password: String, devicePubkey: String, deviceName: String): ApiResult<LoginResponse> {
+    // ===== Шаг 1 входа: логин + пароль + устройство =====
+    suspend fun login(
+        login: String,
+        password: String,
+        devicePubkey: String,
+        deviceName: String,
+    ): ApiResult<LoginResponse> {
         val request = LoginRequest(
             login = login,
             password = password,
             device = DeviceRequest(name = deviceName, pubkey = devicePubkey),
         )
-        return post("/api/auth/login", request)
+        val body = json.encodeToString(LoginRequest.serializer(), request)
+        val httpRequest = Request.Builder()
+            .url("$apiUrl/api/auth/login")
+            .post(body.toRequestBody(JSON))
+            .build()
+        return execute(httpRequest) { responseBody ->
+            json.decodeFromString(LoginResponse.serializer(), responseBody)
+        }
     }
 
-    // Шаг 2а: код TOTP или запасной код.
-    suspend fun twoFactorCode(ticket: String, code: String, devicePubkey: String, deviceName: String): ApiResult<TwoFactorResponse> {
+    // ===== Шаг 2 входа: подтверждение 2FA кодом =====
+    suspend fun twoFactorCode(
+        ticket: String,
+        code: String,
+        devicePubkey: String,
+        deviceName: String,
+    ): ApiResult<TwoFactorResponse> {
         val request = TwoFactorCodeRequest(
             ticket = ticket,
             code = code,
             device = DeviceRequest(name = deviceName, pubkey = devicePubkey),
         )
-        return post("/api/auth/2fa/code", request)
+        val body = json.encodeToString(TwoFactorCodeRequest.serializer(), request)
+        val httpRequest = Request.Builder()
+            .url("$apiUrl/api/auth/2fa/code")
+            .post(body.toRequestBody(JSON))
+            .build()
+        return execute(httpRequest) { responseBody ->
+            json.decodeFromString(TwoFactorResponse.serializer(), responseBody)
+        }
     }
 
-    // Проверка валидности токена (GET /api/auth/me).
+    // ===== Проверка валидности токена (GET /api/auth/me) =====
     suspend fun me(): ApiResult<MeResponse> {
-        return get("/api/auth/me")
-    }
-
-    // Выход (POST /api/auth/logout).
-    suspend fun logout(): ApiResult<Unit> {
-        return post("/api/auth/logout", Unit)
-    }
-
-    // ===== HTTP-методы =====
-
-    private suspend fun <T : Any> get(path: String): ApiResult<T> {
-        val request = Request.Builder()
-            .url("$apiUrl$path")
+        val httpRequest = Request.Builder()
+            .url("$apiUrl/api/auth/me")
             .get()
             .build()
-        return execute(request)
+        return execute(httpRequest) { responseBody ->
+            json.decodeFromString(MeResponse.serializer(), responseBody)
+        }
     }
 
-    private suspend fun <Req : Any, T : Any> post(path: String, body: Req): ApiResult<T> {
-        val jsonBody = if (body == Unit) "" else json.encodeToString(serializerFor(body), body)
-        val request = Request.Builder()
-            .url("$apiUrl$path")
-            .post(jsonBody.toRequestBody(JSON))
+    // ===== Выход (POST /api/auth/logout) =====
+    suspend fun logout(): ApiResult<Unit> {
+        val httpRequest = Request.Builder()
+            .url("$apiUrl/api/auth/logout")
+            .post("{}".toRequestBody(JSON))
             .build()
-        return execute(request)
+        return execute(httpRequest) { _ -> Unit }
     }
 
-    private suspend fun <T : Any> execute(request: Request): ApiResult<T> {
+    // ===== Общий исполнитель запросов =====
+
+    /**
+     * Выполняет HTTP-запрос и десериализует ответ через переданную функцию.
+     * Это позволяет каждому методу указать свой тип без generic-трюков.
+     */
+    private suspend fun <T> execute(
+        request: Request,
+        decode: (String) -> T,
+    ): ApiResult<T> {
         return try {
             val response = client.newCall(request).execute()
             val responseBody = response.body?.string() ?: ""
@@ -118,14 +127,13 @@ class ApiClient(context: Context, baseUrl: String) {
                         @Suppress("UNCHECKED_CAST")
                         ApiResult.Success(Unit as T)
                     } else {
-                        val data = json.decodeFromString(deserializerFor<T>(), responseBody)
-                        ApiResult.Success(data)
+                        ApiResult.Success(decode(responseBody))
                     }
                 }
                 401 -> ApiResult.Unauthorized
                 else -> {
                     val error = try {
-                        json.decodeFromString<ApiError>(responseBody)
+                        json.decodeFromString(ApiError.serializer(), responseBody)
                     } catch (e: Exception) {
                         ApiError(response.code, responseBody, null)
                     }
@@ -138,28 +146,6 @@ class ApiClient(context: Context, baseUrl: String) {
         } catch (e: Exception) {
             Log.e(TAG, "Неожиданная ошибка", e)
             ApiResult.Network(e)
-        }
-    }
-
-    // Вспомогательные функции для сериализации (Kotlin reified не работает с inline)
-    private fun <T : Any> serializerFor(value: T): kotlinx.serialization.KSerializer<T> {
-        @Suppress("UNCHECKED_CAST")
-        return when (value) {
-            is LoginRequest -> LoginRequest.serializer() as kotlinx.serialization.KSerializer<T>
-            is TwoFactorCodeRequest -> TwoFactorCodeRequest.serializer() as kotlinx.serialization.KSerializer<T>
-            is Unit -> Unit.serializer() as kotlinx.serialization.KSerializer<T>
-            else -> throw IllegalArgumentException("Неизвестный тип: ${value::class}")
-        }
-    }
-
-    @Suppress("UNCHECKED_CAST")
-    private inline fun <reified T : Any> deserializerFor(): kotlinx.serialization.KSerializer<T> {
-        return when (T::class) {
-            LoginResponse::class -> LoginResponse.serializer() as kotlinx.serialization.KSerializer<T>
-            TwoFactorResponse::class -> TwoFactorResponse.serializer() as kotlinx.serialization.KSerializer<T>
-            MeResponse::class -> MeResponse.serializer() as kotlinx.serialization.KSerializer<T>
-            Unit::class -> Unit.serializer() as kotlinx.serialization.KSerializer<T>
-            else -> throw IllegalArgumentException("Неизвестный тип: ${T::class}")
         }
     }
 }
