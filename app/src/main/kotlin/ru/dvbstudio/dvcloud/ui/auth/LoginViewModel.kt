@@ -13,21 +13,11 @@ import kotlinx.coroutines.launch
 import ru.dvbstudio.dvcloud.data.api.ApiResult
 import ru.dvbstudio.dvcloud.data.repository.AuthRepository
 import ru.dvbstudio.dvcloud.data.repository.LoginStep
+import java.net.ConnectException
+import java.net.SocketTimeoutException
+import java.net.UnknownHostException
+import javax.net.ssl.SSLException
 
-/**
- * ViewModel экрана входа.
- *
- * Ключевое изменение: поля username, password, twoFactorCode теперь
- * обёрнуты в mutableStateOf, чтобы Compose перерисовывал текстовые поля
- * при каждом изменении значения.
- *
- * Состояния:
- * - Idle — пользователь вводит данные
- * - Loading — идёт запрос к серверу
- * - Error — ошибка (показываем Snackbar)
- * - RequiresTwoFactor — сервер вернул ticket, нужен код
- * - Success — вход прошёл, переходим на главный экран
- */
 class LoginViewModel(application: Application) : AndroidViewModel(application) {
 
     private val repository = AuthRepository(application)
@@ -35,7 +25,6 @@ class LoginViewModel(application: Application) : AndroidViewModel(application) {
     private val _state = MutableStateFlow<LoginUiState>(LoginUiState.Idle)
     val state: StateFlow<LoginUiState> = _state.asStateFlow()
 
-    // Поля ввода: mutableStateOf для перерисовки Compose при каждом изменении
     var username by mutableStateOf("")
         private set
     var password by mutableStateOf("")
@@ -43,7 +32,6 @@ class LoginViewModel(application: Application) : AndroidViewModel(application) {
     var twoFactorCode by mutableStateOf("")
         private set
 
-    // Ticket 2FA (не в UI, просто храним между шагами)
     private var currentTicket: String? = null
     private var currentMethods: List<String> = emptyList()
 
@@ -76,9 +64,7 @@ class LoginViewModel(application: Application) : AndroidViewModel(application) {
             when (val result = repository.login(username, password)) {
                 is ApiResult.Success -> handleLoginStep(result.data)
                 is ApiResult.Error -> handleError(result.code, result.message)
-                is ApiResult.Network -> _state.value = LoginUiState.Error(
-                    messageId = ru.dvbstudio.dvcloud.R.string.login_error_network,
-                )
+                is ApiResult.Network -> handleNetworkError(result.exception)
                 is ApiResult.Unauthorized -> _state.value = LoginUiState.Error(
                     messageId = ru.dvbstudio.dvcloud.R.string.login_error_invalid,
                 )
@@ -114,16 +100,12 @@ class LoginViewModel(application: Application) : AndroidViewModel(application) {
                 is ApiResult.Error -> {
                     val messageId = if (result.code == 401) {
                         ru.dvbstudio.dvcloud.R.string.twofactor_error_invalid
-                    } else if (result.code == 429) {
-                        ru.dvbstudio.dvcloud.R.string.login_error_invalid
                     } else {
                         ru.dvbstudio.dvcloud.R.string.login_error_unknown
                     }
                     _state.value = LoginUiState.Error(messageId = messageId)
                 }
-                is ApiResult.Network -> _state.value = LoginUiState.Error(
-                    messageId = ru.dvbstudio.dvcloud.R.string.login_error_network,
-                )
+                is ApiResult.Network -> handleNetworkError(result.exception)
                 is ApiResult.Unauthorized -> _state.value = LoginUiState.Error(
                     messageId = ru.dvbstudio.dvcloud.R.string.twofactor_error_invalid,
                 )
@@ -173,6 +155,24 @@ class LoginViewModel(application: Application) : AndroidViewModel(application) {
             else -> ru.dvbstudio.dvcloud.R.string.login_error_unknown
         }
         _state.value = LoginUiState.Error(messageId = messageId, details = message)
+    }
+
+    /**
+     * Преобразует сетевые исключения в читаемые сообщения.
+     * Показывает техническую причину в Snackbar (для отладки).
+     */
+    private fun handleNetworkError(e: Throwable) {
+        val details = when (e) {
+            is UnknownHostException -> "Не удалось найти сервер (DNS)"
+            is ConnectException -> "Сервер недоступен (порт закрыт)"
+            is SocketTimeoutException -> "Сервер не отвечает (таймаут)"
+            is SSLException -> "Ошибка SSL-сертификата"
+            else -> e.message ?: "Сетевая ошибка"
+        }
+        _state.value = LoginUiState.Error(
+            messageId = ru.dvbstudio.dvcloud.R.string.login_error_network,
+            details = details,
+        )
     }
 }
 

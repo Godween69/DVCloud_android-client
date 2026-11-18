@@ -3,19 +3,46 @@ package ru.dvbstudio.dvcloud.data.api
 import android.content.Context
 import android.util.Log
 import kotlinx.serialization.json.Json
+import okhttp3.Dns
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.logging.HttpLoggingInterceptor
 import java.io.IOException
+import java.net.ConnectException
+import java.net.Inet4Address
+import java.net.InetAddress
+import java.net.SocketTimeoutException
+import java.net.UnknownHostException
 import java.util.concurrent.TimeUnit
+import javax.net.ssl.SSLException
 
 /**
- * HTTP-клиент для DV Cloud API.
- *
- * Каждый метод (login, twoFactorCode, me, logout) имеет свой тип запроса и ответа.
- * Это проще и безопаснее, чем generic-рефлексия.
+ * DNS-резолвер: принудительно использует IPv4 (на случай если телефон пытается IPv6).
+ */
+class IPv4Dns : Dns {
+    override fun lookup(hostname: String): List<InetAddress> {
+        return try {
+            val addresses = Dns.SYSTEM.lookup(hostname)
+            // Фильтруем только IPv4 адреса
+            val ipv4 = addresses.filter { it is Inet4Address }
+            if (ipv4.isEmpty()) {
+                Log.w("ApiClient", "Нет IPv4 адресов для $hostname, используем все")
+                addresses
+            } else {
+                Log.d("ApiClient", "Используем IPv4 для $hostname: ${ipv4.first().hostAddress}")
+                ipv4
+            }
+        } catch (e: Exception) {
+            Log.e("ApiClient", "DNS lookup error for $hostname", e)
+            throw e
+        }
+    }
+}
+
+/**
+ * HTTP-клиент для DV Cloud API с принудительным IPv4.
  */
 class ApiClient(context: Context, baseUrl: String) {
 
@@ -23,7 +50,6 @@ class ApiClient(context: Context, baseUrl: String) {
         private const val TAG = "ApiClient"
         private val JSON = "application/json".toMediaType()
 
-        // JSON-конфигурация: игнорируем неизвестные поля
         private val json = Json {
             ignoreUnknownKeys = true
             encodeDefaults = true
@@ -32,9 +58,15 @@ class ApiClient(context: Context, baseUrl: String) {
     }
 
     private val client: OkHttpClient = OkHttpClient.Builder()
+        .dns(IPv4Dns())  // Принудительно IPv4
         .addInterceptor(AuthInterceptor(context))
         .addInterceptor(HttpLoggingInterceptor().apply {
-            level = HttpLoggingInterceptor.Level.BODY
+            level = HttpLoggingInterceptor.Level.BASIC
+            logger = object : HttpLoggingInterceptor.Logger {
+                override fun log(message: String) {
+                    Log.d("OkHttp", message)
+                }
+            }
         })
         .connectTimeout(30, TimeUnit.SECONDS)
         .readTimeout(30, TimeUnit.SECONDS)
@@ -43,7 +75,6 @@ class ApiClient(context: Context, baseUrl: String) {
 
     private val apiUrl = baseUrl.trimEnd('/')
 
-    // ===== Шаг 1 входа: логин + пароль + устройство =====
     suspend fun login(
         login: String,
         password: String,
@@ -65,7 +96,6 @@ class ApiClient(context: Context, baseUrl: String) {
         }
     }
 
-    // ===== Шаг 2 входа: подтверждение 2FA кодом =====
     suspend fun twoFactorCode(
         ticket: String,
         code: String,
@@ -87,7 +117,6 @@ class ApiClient(context: Context, baseUrl: String) {
         }
     }
 
-    // ===== Проверка валидности токена (GET /api/auth/me) =====
     suspend fun me(): ApiResult<MeResponse> {
         val httpRequest = Request.Builder()
             .url("$apiUrl/api/auth/me")
@@ -98,7 +127,6 @@ class ApiClient(context: Context, baseUrl: String) {
         }
     }
 
-    // ===== Выход (POST /api/auth/logout) =====
     suspend fun logout(): ApiResult<Unit> {
         val httpRequest = Request.Builder()
             .url("$apiUrl/api/auth/logout")
@@ -107,19 +135,16 @@ class ApiClient(context: Context, baseUrl: String) {
         return execute(httpRequest) { _ -> Unit }
     }
 
-    // ===== Общий исполнитель запросов =====
-
-    /**
-     * Выполняет HTTP-запрос и десериализует ответ через переданную функцию.
-     * Это позволяет каждому методу указать свой тип без generic-трюков.
-     */
     private suspend fun <T> execute(
         request: Request,
         decode: (String) -> T,
     ): ApiResult<T> {
         return try {
+            Log.d(TAG, "Запрос: ${request.method} ${request.url}")
+            Log.d(TAG, "Полный URL: ${request.url}")
             val response = client.newCall(request).execute()
             val responseBody = response.body?.string() ?: ""
+            Log.d(TAG, "Ответ: ${response.code}, длина: ${responseBody.length}")
 
             when (response.code) {
                 in 200..299 -> {
@@ -140,11 +165,23 @@ class ApiClient(context: Context, baseUrl: String) {
                     ApiResult.Error(error.statusCode, error.message)
                 }
             }
+        } catch (e: UnknownHostException) {
+            Log.e(TAG, "DNS-ошибка: ${e.message}")
+            ApiResult.Network(e)
+        } catch (e: ConnectException) {
+            Log.e(TAG, "Ошибка соединения: ${e.message}")
+            ApiResult.Network(e)
+        } catch (e: SocketTimeoutException) {
+            Log.e(TAG, "Таймаут: ${e.message}")
+            ApiResult.Network(e)
+        } catch (e: SSLException) {
+            Log.e(TAG, "SSL-ошибка: ${e.message}")
+            ApiResult.Network(e)
         } catch (e: IOException) {
-            Log.e(TAG, "Сетевая ошибка", e)
+            Log.e(TAG, "Сетевая ошибка: ${e.message}", e)
             ApiResult.Network(e)
         } catch (e: Exception) {
-            Log.e(TAG, "Неожиданная ошибка", e)
+            Log.e(TAG, "Неожиданная ошибка: ${e.message}", e)
             ApiResult.Network(e)
         }
     }
