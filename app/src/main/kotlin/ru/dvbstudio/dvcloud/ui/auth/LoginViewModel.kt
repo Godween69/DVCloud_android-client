@@ -13,10 +13,6 @@ import kotlinx.coroutines.launch
 import ru.dvbstudio.dvcloud.data.api.ApiResult
 import ru.dvbstudio.dvcloud.data.repository.AuthRepository
 import ru.dvbstudio.dvcloud.data.repository.LoginStep
-import java.net.ConnectException
-import java.net.SocketTimeoutException
-import java.net.UnknownHostException
-import javax.net.ssl.SSLException
 
 class LoginViewModel(application: Application) : AndroidViewModel(application) {
 
@@ -39,26 +35,15 @@ class LoginViewModel(application: Application) : AndroidViewModel(application) {
         repository.initApiClient()
     }
 
-    fun updateUsername(value: String) {
-        username = value
-    }
-
-    fun updatePassword(value: String) {
-        password = value
-    }
-
-    fun updateTwoFactorCode(value: String) {
-        twoFactorCode = value
-    }
+    fun updateUsername(value: String) { username = value }
+    fun updatePassword(value: String) { password = value }
+    fun updateTwoFactorCode(value: String) { twoFactorCode = value }
 
     fun login() {
         if (username.isBlank() || password.isBlank()) {
-            _state.value = LoginUiState.Error(
-                messageId = ru.dvbstudio.dvcloud.R.string.login_error_empty,
-            )
+            _state.value = LoginUiState.Error(messageId = ru.dvbstudio.dvcloud.R.string.login_error_empty)
             return
         }
-
         _state.value = LoginUiState.Loading
         viewModelScope.launch {
             when (val result = repository.login(username, password)) {
@@ -75,36 +60,24 @@ class LoginViewModel(application: Application) : AndroidViewModel(application) {
     fun completeTwoFactor() {
         val ticket = currentTicket
         if (ticket == null) {
-            _state.value = LoginUiState.Error(
-                messageId = ru.dvbstudio.dvcloud.R.string.twofactor_error_expired,
-            )
+            _state.value = LoginUiState.Error(messageId = ru.dvbstudio.dvcloud.R.string.twofactor_error_expired)
             return
         }
         if (twoFactorCode.isBlank()) {
-            _state.value = LoginUiState.Error(
-                messageId = ru.dvbstudio.dvcloud.R.string.twofactor_error_empty,
-            )
+            _state.value = LoginUiState.Error(messageId = ru.dvbstudio.dvcloud.R.string.twofactor_error_empty)
             return
         }
-
         _state.value = LoginUiState.Loading
         viewModelScope.launch {
             when (val result = repository.completeTwoFactor(ticket, twoFactorCode)) {
                 is ApiResult.Success -> {
-                    repository.saveRegistration(
-                        result.data,
-                        ru.dvbstudio.dvcloud.BuildConfig.API_BASE_URL,
-                    )
+                    repository.saveRegistration(result.data, ru.dvbstudio.dvcloud.BuildConfig.API_BASE_URL)
                     _state.value = LoginUiState.Success
                 }
-                is ApiResult.Error -> {
-                    val messageId = if (result.code == 401) {
-                        ru.dvbstudio.dvcloud.R.string.twofactor_error_invalid
-                    } else {
-                        ru.dvbstudio.dvcloud.R.string.login_error_unknown
-                    }
-                    _state.value = LoginUiState.Error(messageId = messageId)
-                }
+                is ApiResult.Error -> _state.value = LoginUiState.Error(
+                    messageId = if (result.code == 401) ru.dvbstudio.dvcloud.R.string.twofactor_error_invalid
+                    else ru.dvbstudio.dvcloud.R.string.login_error_unknown,
+                )
                 is ApiResult.Network -> handleNetworkError(result.exception)
                 is ApiResult.Unauthorized -> _state.value = LoginUiState.Error(
                     messageId = ru.dvbstudio.dvcloud.R.string.twofactor_error_invalid,
@@ -114,11 +87,8 @@ class LoginViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun clearError() {
-        if (currentTicket != null) {
-            _state.value = LoginUiState.RequiresTwoFactor(currentMethods)
-        } else {
-            _state.value = LoginUiState.Idle
-        }
+        _state.value = if (currentTicket != null) LoginUiState.RequiresTwoFactor(currentMethods)
+        else LoginUiState.Idle
     }
 
     fun backToLogin() {
@@ -130,14 +100,9 @@ class LoginViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun handleLoginStep(step: LoginStep) {
         when (step) {
-            is LoginStep.Completed -> {
-                viewModelScope.launch {
-                    repository.saveRegistration(
-                        step.registration,
-                        ru.dvbstudio.dvcloud.BuildConfig.API_BASE_URL,
-                    )
-                    _state.value = LoginUiState.Success
-                }
+            is LoginStep.Completed -> viewModelScope.launch {
+                repository.saveRegistration(step.registration, ru.dvbstudio.dvcloud.BuildConfig.API_BASE_URL)
+                _state.value = LoginUiState.Success
             }
             is LoginStep.RequiresTwoFactor -> {
                 currentTicket = step.ticket
@@ -149,8 +114,7 @@ class LoginViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun handleError(code: Int, message: String) {
         val messageId = when (code) {
-            401 -> ru.dvbstudio.dvcloud.R.string.login_error_invalid
-            429 -> ru.dvbstudio.dvcloud.R.string.login_error_invalid
+            401, 429 -> ru.dvbstudio.dvcloud.R.string.login_error_invalid
             in 500..599 -> ru.dvbstudio.dvcloud.R.string.login_error_unknown
             else -> ru.dvbstudio.dvcloud.R.string.login_error_unknown
         }
@@ -158,17 +122,11 @@ class LoginViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /**
-     * Преобразует сетевые исключения в читаемые сообщения.
-     * Показывает техническую причину в Snackbar (для отладки).
+     * Показываем точный тип исключения в деталях — это ключ к диагностике.
+     * Формат: "КлассИсключения: сообщение"
      */
     private fun handleNetworkError(e: Throwable) {
-        val details = when (e) {
-            is UnknownHostException -> "Не удалось найти сервер (DNS)"
-            is ConnectException -> "Сервер недоступен (порт закрыт)"
-            is SocketTimeoutException -> "Сервер не отвечает (таймаут)"
-            is SSLException -> "Ошибка SSL-сертификата"
-            else -> e.message ?: "Сетевая ошибка"
-        }
+        val details = "${e::class.java.simpleName}: ${e.message ?: "без сообщения"}"
         _state.value = LoginUiState.Error(
             messageId = ru.dvbstudio.dvcloud.R.string.login_error_network,
             details = details,
@@ -179,12 +137,7 @@ class LoginViewModel(application: Application) : AndroidViewModel(application) {
 sealed class LoginUiState {
     data object Idle : LoginUiState()
     data object Loading : LoginUiState()
-    data class Error(
-        val messageId: Int,
-        val details: String? = null,
-    ) : LoginUiState()
-    data class RequiresTwoFactor(
-        val methods: List<String>,
-    ) : LoginUiState()
+    data class Error(val messageId: Int, val details: String? = null) : LoginUiState()
+    data class RequiresTwoFactor(val methods: List<String>) : LoginUiState()
     data object Success : LoginUiState()
 }
